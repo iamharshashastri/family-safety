@@ -7,7 +7,7 @@
     <style>
       body{font-family:Arial,Helvetica,sans-serif;margin:20px;color:#222}
       .container{max-width:980px;margin:0 auto}
-      input,button,select{padding:8px;margin:6px 0;border-radius:6px;border:1px solid #ddd;box-sizing:border-box}
+      input,button,select,textarea{padding:8px;margin:6px 0;border-radius:6px;border:1px solid #ddd;box-sizing:border-box}
       button{background:#1a73e8;color:#fff;border:none;cursor:pointer}
       section{padding:12px;border-radius:8px;border:1px solid #eee;background:#fafafa;margin-bottom:16px}
       ul{list-style:none;padding:0}
@@ -15,6 +15,10 @@
       .small{font-size:0.9em;color:#666}
       pre{white-space:pre-wrap;background:#f1f3f4;padding:8px;border-radius:6px;border:1px solid #e0e0e0}
       .hidden{display:none}
+      .muted{color:#666;font-size:0.9em}
+      .row{display:flex;gap:8px;align-items:center}
+      table{width:100%;border-collapse:collapse}
+      th,td{padding:8px;border-bottom:1px solid #eee;text-align:left;font-size:0.95em}
     </style>
   </head>
   <body>
@@ -33,10 +37,13 @@
 
         <section>
           <h3>Pair a device</h3>
-          <input id="deviceName" placeholder="Device name (e.g. Kid's Laptop)" />
-          <input id="pairCode" placeholder="Pairing code (from child app)" />
-          <button id="pairBtn">Add</button>
+          <div class="row">
+            <input id="deviceName" placeholder="Device name (e.g. Kid's Laptop)" />
+            <input id="pairCode" placeholder="Pairing code (from child app)" />
+            <button id="pairBtn">Add</button>
+          </div>
           <div id="pairResult" class="small" role="status" aria-live="polite"></div>
+          <div class="muted">If the pairing code is invalid or expired you will see a friendly message here — no stack traces.</div>
         </section>
 
         <section>
@@ -44,21 +51,57 @@
           <ul id="devicesList"></ul>
         </section>
 
-        <section>
-          <h3>Requests</h3>
-          <ul id="requestsList"></ul>
+        <section id="deviceDetailSection" class="hidden">
+          <h3>Manage device: <span id="detailDeviceName"></span></h3>
+
+          <div style="display:flex;gap:12px;flex-wrap:wrap">
+            <div style="flex:1;min-width:280px">
+              <h4>Policy</h4>
+              <label><input id="toggleAllowAll" type="checkbox" /> Allow all websites</label><br/>
+              <label><input id="toggleBlockStore" type="checkbox" /> Block Chrome Web Store</label><br/>
+              <div class="small">Screen time per day (minutes): <input id="screenMinutes" type="number" style="width:120px" /> <button id="savePolicy">Save</button></div>
+              <div style="margin-top:12px">
+                <h4>Immediate actions</h4>
+                <input id="lockMinutes" type="number" placeholder="Minutes to lock" style="width:120px" /> <button id="lockNowBtn">Lock Now</button>
+                <div class="small">Locking sets an unclosable overlay on the child device until time expires.</div>
+              </div>
+            </div>
+
+            <div style="flex:1;min-width:280px">
+              <h4>Allowed websites</h4>
+              <div class="row">
+                <input id="allowedDomainInput" placeholder="example.com or sub.example.com" />
+                <button id="addAllowedBtn">Add</button>
+              </div>
+              <ul id="allowedList"></ul>
+            </div>
+          </div>
+
+          <div style="margin-top:16px">
+            <h4>Browsing history (recent)</h4>
+            <button id="loadHistoryBtn">Load History</button>
+            <div id="historyContainer" style="max-height:300px;overflow:auto;margin-top:8px"></div>
+          </div>
+
+          <div style="margin-top:12px">
+            <h4>Device token (paste into child)</h4>
+            <pre id="deviceTokenBox"></pre>
+          </div>
+
+          <div style="margin-top:12px">
+            <button id="backToDevices">Back to devices</button>
+          </div>
         </section>
 
         <section>
-          <h3>Device Token</h3>
-          <div class="small">After claiming, copy the device token below and paste it into the child app via its settings (Set Device Token button).</div>
-          <pre id="deviceTokenBox"></pre>
+          <h3>Requests</h3>
+          <ul id="requestsList"></ul>
         </section>
       </section>
     </div>
 
     <script type="module">
-      // CONFIG: Replace values with your real project values if different.
+      // Embedded config (your values)
       const SUPABASE_URL = 'https://vjvzvigfsicyrzyfudgc.supabase.co';
       const SUPABASE_ANON = 'sb_publishable_6AviRtytGEBstXR6ousKnQ_qqS09BZz';
       const EDGE_FN_URL = 'https://vjvzvigfsicyrzyfudgc.supabase.co/functions/v1/device-control';
@@ -66,13 +109,12 @@
       import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm';
       const supabase = createClient(SUPABASE_URL, SUPABASE_ANON);
 
-      // DOM elements
-      const emailEl = document.getElementById('email');
-      const sendLinkBtn = document.getElementById('sendLink');
-      const authMsg = document.getElementById('authMsg');
+      // Elements
       const authSection = document.getElementById('auth');
       const dashboard = document.getElementById('dashboard');
-      const userInfo = document.getElementById('userInfo');
+      const authMsg = document.getElementById('authMsg');
+      const emailEl = document.getElementById('email');
+      const sendLinkBtn = document.getElementById('sendLink');
 
       const deviceNameEl = document.getElementById('deviceName');
       const pairCodeEl = document.getElementById('pairCode');
@@ -81,19 +123,36 @@
 
       const devicesList = document.getElementById('devicesList');
       const requestsList = document.getElementById('requestsList');
-      const deviceTokenBox = document.getElementById('deviceTokenBox');
 
+      const deviceDetailSection = document.getElementById('deviceDetailSection');
+      const detailDeviceName = document.getElementById('detailDeviceName');
+      const toggleAllowAll = document.getElementById('toggleAllowAll');
+      const toggleBlockStore = document.getElementById('toggleBlockStore');
+      const screenMinutes = document.getElementById('screenMinutes');
+      const savePolicy = document.getElementById('savePolicy');
+      const lockMinutes = document.getElementById('lockMinutes');
+      const lockNowBtn = document.getElementById('lockNowBtn');
+      const allowedDomainInput = document.getElementById('allowedDomainInput');
+      const addAllowedBtn = document.getElementById('addAllowedBtn');
+      const allowedList = document.getElementById('allowedList');
+      const loadHistoryBtn = document.getElementById('loadHistoryBtn');
+      const historyContainer = document.getElementById('historyContainer');
+      const deviceTokenBox = document.getElementById('deviceTokenBox');
+      const backToDevices = document.getElementById('backToDevices');
+
+      let selectedDeviceId = null;
+
+      // AUTH flows
       sendLinkBtn.addEventListener('click', async () => {
         const email = emailEl.value.trim();
         authMsg.innerText = '';
-        if (!email) { authMsg.innerText = 'Please enter an email address.'; return; }
+        if (!email) { authMsg.innerText = 'Please enter your email.'; return; }
         authMsg.innerText = 'Sending sign-in link...';
         const { error } = await supabase.auth.signInWithOtp({ email });
-        if (error) authMsg.innerText = error.message || 'Failed to send sign-in link.';
-        else authMsg.innerText = 'Magic link sent. Open your email and click the link to sign in.';
+        if (error) authMsg.innerText = error.message || 'Failed to send link.';
+        else authMsg.innerText = 'Magic link sent. Click the link in your email to sign in.';
       });
 
-      // Initialize session UI
       async function initSession() {
         const { data } = await supabase.auth.getSession();
         const session = data.session;
@@ -106,21 +165,19 @@
         authSection.classList.add('hidden');
         dashboard.classList.remove('hidden');
         dashboard.setAttribute('aria-hidden', 'false');
-        userInfo.innerText = `Signed in: ${session.user.email}`;
+        document.getElementById('userInfo').innerText = `Signed in: ${session.user.email}`;
         await loadDevicesAndSubscribe();
       }
-
       supabase.auth.onAuthStateChange(() => initSession());
       initSession();
 
-      // Claim device: friendly messages, no raw errors shown
+      // Claim device (friendly messages)
       async function claimDevice(pairing_code, name) {
         pairResult.innerText = '';
         if (!pairing_code) { pairResult.innerText = 'Enter the pairing code shown in the child app.'; return; }
         const { data: sessionData } = await supabase.auth.getSession();
         const session = sessionData.session;
         if (!session) { pairResult.innerText = 'Please sign in first.'; return; }
-
         const accessToken = session.access_token;
         try {
           const res = await fetch(EDGE_FN_URL, {
@@ -128,42 +185,30 @@
             headers: { 'content-type': 'application/json', 'authorization': 'Bearer ' + accessToken },
             body: JSON.stringify({ action: 'claim', pairing_code, name })
           });
-
-          // handle invalid/expired/random codes gracefully
           const j = await res.json().catch(() => ({}));
           if (!res.ok) {
-            // Friendly messages for common cases
             const msg = (j && j.error) ? j.error.toString() : res.statusText;
-            if (/pairing code/i.test(msg) || /invalid/i.test(msg) || res.status === 404) {
+            if (/pairing code|invalid/i.test(msg) || res.status === 404) {
               pairResult.innerText = 'Pairing code not recognized. Check the code on the child device and try again.';
             } else if (/expired/i.test(msg) || res.status === 400) {
               pairResult.innerText = 'Pairing code expired. Restart the child app to generate a new code.';
             } else {
-              pairResult.innerText = 'Could not claim device. Try again or contact support.';
-              console.warn('claimDevice non-fatal error:', res.status, msg);
+              pairResult.innerText = 'Could not claim device. Try again later.';
+              console.warn('claimDevice non-fatal', res.status, msg);
             }
             return;
           }
-
-          // Success: show device token and update device list
           pairResult.innerText = 'Device claimed successfully.';
           deviceTokenBox.innerText = `${j.device_token}\nExpires: ${j.token_expires_at}`;
-          // Do not throw or show raw errors
           await loadDevicesAndSubscribe();
         } catch (err) {
-          // network or unexpected error: friendly message, no stack trace shown in UI
           pairResult.innerText = 'Network error. Please try again.';
-          console.error('claimDevice network error', err);
+          console.error('claimDevice', err);
         }
       }
+      pairBtn.addEventListener('click', () => claimDevice(pairCodeEl.value.trim(), deviceNameEl.value.trim()));
 
-      pairBtn.addEventListener('click', async () => {
-        const pairing_code = pairCodeEl.value.trim();
-        const name = deviceNameEl.value.trim();
-        await claimDevice(pairing_code, name);
-      });
-
-      // load devices & subscribe to requests (graceful if no devices)
+      // Load devices and subscribe for requests
       async function loadDevicesAndSubscribe() {
         devicesList.innerHTML = '';
         requestsList.innerHTML = '';
@@ -175,31 +220,37 @@
         const { data: devices } = await supabase.from('devices').select('*').eq('owner_user_id', session.user.id).order('last_seen', { ascending: false });
         (devices || []).forEach(d => {
           const li = document.createElement('li');
-          li.innerHTML = `<div><strong>${d.name || d.device_id}</strong><div class="small">Last seen: ${d.last_seen || '-'}</div></div><div><button data-id="${d.device_id}" class="manage">Manage</button></div>`;
+          li.innerHTML = `<div><strong>${d.name || d.device_id}</strong><div class="small">Last seen: ${d.last_seen || '-'}</div></div>
+                          <div><button data-id="${d.device_id}" class="manage">Manage</button></div>`;
           devicesList.appendChild(li);
         });
 
+        // requests initial load and subscribe
         const deviceIds = (devices || []).map(d => d.device_id);
-        if (deviceIds.length === 0) return;
+        if (deviceIds.length > 0) {
+          const { data: reqs } = await supabase.from('screen_time_requests').select('*').in('device_id', deviceIds).order('requested_at', { ascending: false }).limit(200);
+          (reqs || []).forEach(renderRequest);
+          deviceIds.forEach(id => {
+            supabase.channel('requests-' + id)
+              .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'screen_time_requests', filter: `device_id=eq.${id}` }, payload => {
+                renderRequest(payload.new, true);
+              })
+              .subscribe();
+          });
+        }
 
-        // initial requests load (if any)
-        const { data: reqs } = await supabase.from('screen_time_requests').select('*').in('device_id', deviceIds).order('requested_at', { ascending: false }).limit(200);
-        (reqs || []).forEach(renderRequest);
-
-        // subscribe to inserts for each device id (handles empty list gracefully)
-        deviceIds.forEach(id => {
-          supabase.channel('requests-' + id)
-            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'screen_time_requests', filter: `device_id=eq.${id}` }, payload => {
-              renderRequest(payload.new, true);
-            })
-            .subscribe();
-        });
+        // attach manage button handlers
+        Array.from(document.getElementsByClassName('manage')).forEach(btn => btn.addEventListener('click', async (e) => {
+          const deviceId = e.target.getAttribute('data-id');
+          await openDeviceDetail(deviceId);
+        }));
       }
 
       function renderRequest(r, prepend=false) {
         const li = document.createElement('li');
         li.id = 'req-' + r.id;
-        li.innerHTML = `<div><div><strong>Device ${r.device_id}</strong> — ${r.reason}</div><div class="small">${new Date(r.requested_at).toLocaleString()}</div></div><div><button class="approve">Approve</button> <button class="deny">Deny</button></div>`;
+        li.innerHTML = `<div><div><strong>Device ${r.device_id}</strong> — ${r.reason}</div><div class="small">${new Date(r.requested_at).toLocaleString()}</div></div>
+                        <div><button class="approve" data-id="${r.id}" data-dev="${r.device_id}">Approve</button> <button class="deny" data-id="${r.id}" data-dev="${r.device_id}">Deny</button></div>`;
         li.querySelector('.approve').addEventListener('click', () => handleApprove(r.id, r.device_id, true));
         li.querySelector('.deny').addEventListener('click', () => handleApprove(r.id, r.device_id, false));
         if (prepend) requestsList.prepend(li); else requestsList.appendChild(li);
@@ -229,6 +280,112 @@
           console.error('approve error', err);
         }
       }
+
+      // Device management UI
+      async function openDeviceDetail(deviceId) {
+        selectedDeviceId = deviceId;
+        deviceDetailSection.classList.remove('hidden');
+
+        // load device info
+        const { data: devs } = await supabase.from('devices').select('*').eq('device_id', deviceId).limit(1).single();
+        detailDeviceName.innerText = devs?.name || deviceId;
+
+        // load policy
+        const { data: pol } = await supabase.from('device_policies').select('*').eq('device_id', deviceId).limit(1).single();
+        toggleAllowAll.checked = !!(pol?.allow_all);
+        toggleBlockStore.checked = !!(pol?.block_chrome_store);
+        screenMinutes.value = pol?.screen_time_minutes_per_day ?? 120;
+
+        // load allowed domains
+        await refreshAllowedList();
+
+        // show device token area: get most recent token from device_tokens
+        const { data: tok } = await supabase.from('device_tokens').select('*').eq('device_id', deviceId).limit(1).single();
+        deviceTokenBox.innerText = tok?.token ? `${tok.token}\nExpires: ${tok.expires_at}` : 'No device token available (device not claimed?)';
+
+        // clear history container
+        historyContainer.innerHTML = '';
+      }
+
+      async function refreshAllowedList() {
+        allowedList.innerHTML = '';
+        const { data: domains } = await supabase.from('allowed_domains').select('*').eq('device_id', selectedDeviceId).order('domain', { ascending: true });
+        (domains || []).forEach(d => {
+          const li = document.createElement('li');
+          li.innerHTML = `<div>${d.domain}</div><div><button data-id="${d.id}" class="removeAllowed">Remove</button></div>`;
+          allowedList.appendChild(li);
+        });
+        Array.from(document.getElementsByClassName('removeAllowed')).forEach(btn => btn.addEventListener('click', async (e) => {
+          const id = e.target.getAttribute('data-id');
+          try {
+            await supabase.from('allowed_domains').delete().eq('id', id);
+            refreshAllowedList();
+          } catch (err) { console.error('remove domain', err); }
+        }));
+      }
+
+      addAllowedBtn.addEventListener('click', async () => {
+        const domain = allowedDomainInput.value.trim();
+        if (!domain) return alert('Enter a domain');
+        try {
+          await supabase.from('allowed_domains').insert({ device_id: selectedDeviceId, domain });
+          allowedDomainInput.value = '';
+          await refreshAllowedList();
+        } catch (err) {
+          alert('Failed to add domain.');
+          console.error('addAllowed', err);
+        }
+      });
+
+      savePolicy.addEventListener('click', async () => {
+        try {
+          await supabase.from('device_policies').upsert({
+            device_id: selectedDeviceId,
+            allow_all: toggleAllowAll.checked,
+            block_chrome_store: toggleBlockStore.checked,
+            screen_time_minutes_per_day: Number(screenMinutes.value || 120)
+          }, { onConflict: 'device_id' });
+          alert('Policy saved.');
+        } catch (err) {
+          alert('Failed to save policy.');
+          console.error('savePolicy', err);
+        }
+      });
+
+      lockNowBtn.addEventListener('click', async () => {
+        const mins = Number(lockMinutes.value || 0);
+        if (!mins || mins <= 0) return alert('Enter minutes to lock the device.');
+        try {
+          const unlockAt = new Date(Date.now() + mins * 60 * 1000).toISOString();
+          await supabase.from('device_controls').upsert({ device_id: selectedDeviceId, screen_locked_until: unlockAt }, { onConflict: 'device_id' });
+          alert('Device locked for ' + mins + ' minutes.');
+        } catch (err) {
+          alert('Failed to lock device.');
+          console.error('lockNow', err);
+        }
+      });
+
+      loadHistoryBtn.addEventListener('click', async () => {
+        historyContainer.innerHTML = 'Loading...';
+        try {
+          const { data } = await supabase.from('browsing_history').select('*').eq('device_id', selectedDeviceId).order('visited_at', { ascending: false }).limit(500);
+          if (!data || data.length === 0) {
+            historyContainer.innerHTML = '<div class="small">No history available.</div>';
+            return;
+          }
+          const rows = data.map(h => `<tr><td>${new Date(h.visited_at).toLocaleString()}</td><td><a href="${h.url}" target="_blank" rel="noreferrer noopener">${h.url}</a></td></tr>`).join('');
+          historyContainer.innerHTML = `<table><thead><tr><th>Visited At</th><th>URL</th></tr></thead><tbody>${rows}</tbody></table>`;
+        } catch (err) {
+          historyContainer.innerHTML = '<div class="small">Failed to load history.</div>';
+          console.error('loadHistory', err);
+        }
+      });
+
+      backToDevices.addEventListener('click', () => {
+        deviceDetailSection.classList.add('hidden');
+        selectedDeviceId = null;
+      });
+
     </script>
   </body>
 </html>
