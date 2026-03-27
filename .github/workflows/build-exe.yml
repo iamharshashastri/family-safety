@@ -28,6 +28,7 @@ jobs:
 
       - name: Build renderer (if present)
         working-directory: ./electron
+        shell: pwsh
         run: |
           if (Test-Path src/renderer) {
             Push-Location src/renderer
@@ -40,15 +41,26 @@ jobs:
 
       - name: Build Electron (NSIS)
         working-directory: ./electron
-        env:
-          # Optional code signing secrets may remain if you use them (remove if you don't need signing)
-          CSC_LINK: ${{ secrets.CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
         run: |
           npm run build
 
-      - name: Upload installer artifact
+      - name: Verify build artifacts
+        shell: pwsh
+        run: |
+          if (-not (Test-Path electron/dist)) {
+            Write-Error "No build artifacts found at electron/dist — build failed or produced no output."
+            exit 1
+          }
+          $files = Get-ChildItem electron/dist -Recurse | Where-Object { $_.Extension -in '.exe', '.nsi', '.zip', '.7z' }
+          if ($files.Count -eq 0) {
+            Write-Error "No installer artifacts (.exe etc.) found in electron/dist."
+            exit 1
+          }
+          Write-Host "Found build artifacts:"
+          $files | ForEach-Object { Write-Host $_.FullName }
+
+      - name: Upload installer artifact(s)
         uses: actions/upload-artifact@v4
         with:
           name: windows-installer
-          path: electron/dist/*.exe
+          path: electron/dist/**
