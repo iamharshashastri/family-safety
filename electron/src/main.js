@@ -1,6 +1,6 @@
 // electron/src/main.js
-// Minimal production-oriented Electron child app that talks to your single Edge Function.
-// Embedded constants use the exact values you provided.
+// Minimal production-oriented Electron child app (embedded UI)
+// Edit DEVICE_CONTROL_FN_URL or START_URL if needed.
 
 const { app, BrowserWindow, BrowserView, ipcMain, globalShortcut } = require('electron');
 const path = require('path');
@@ -8,9 +8,8 @@ const Store = require('electron-store');
 const dayjs = require('dayjs');
 const { v4: uuidv4 } = require('uuid');
 
-const DEVICE_CONTROL_FN_URL = 'https://vjvzvigfsicyrzyfudgc.supabase.co/functions/v1/device-control';
-const SUPABASE_URL = 'https://vjvzvigfsicyrzyfudgc.supabase.co';
-const START_URL = 'https://duckduckgo.com';
+const DEVICE_CONTROL_FN_URL = 'https://vjvzvigfsicyrzyfudgc.supabase.co/functions/v1/device-control'; // your deployed Edge function
+const START_URL = process.env.START_URL || 'https://duckduckgo.com';
 
 const store = new Store({
   schema: {
@@ -34,8 +33,7 @@ async function ensureDeviceRecord() {
     const code = generatePairingCode();
     store.set('pairingCode', code);
     store.set('pairingCodeCreatedAt', now);
-
-    // Upsert device row server-side via the Edge Function helper action if available
+    // Inform Edge Function to ensure a devices row exists (non-privileged helper action)
     try {
       if (DEVICE_CONTROL_FN_URL) {
         await fetch(DEVICE_CONTROL_FN_URL, {
@@ -46,6 +44,7 @@ async function ensureDeviceRecord() {
       }
     } catch (e) {}
   } else {
+    // touch last_seen for monitoring
     try {
       if (DEVICE_CONTROL_FN_URL) {
         await fetch(DEVICE_CONTROL_FN_URL, {
@@ -74,10 +73,8 @@ async function createMainWindow() {
     }
   });
 
-  // Small topbar UI embedded so only three files are needed
   const topbarHtml = `
-    <!doctype html>
-    <html><head><meta charset="utf-8"/><title>Child</title>
+    <!doctype html><html><head><meta charset="utf-8"/><title>Child</title>
     <style>
       body{margin:0;font-family:Arial}
       .topbar{height:70px;display:flex;align-items:center;padding:10px;gap:12px;background:#f5f7fb;border-bottom:1px solid #e6e9ef}
@@ -85,13 +82,9 @@ async function createMainWindow() {
       .controls{display:flex;gap:8px}
       .controls input{width:420px;padding:8px;border-radius:6px;border:1px solid #ddd}
       .controls button{padding:8px 12px;border-radius:6px;background:#1a73e8;color:#fff;border:none;cursor:pointer}
-    </style>
-    </head><body>
+    </style></head><body>
       <div class="topbar">
-        <div class="pairing">
-          <div id="device">Loading pairing...</div>
-          <div id="pair"></div>
-        </div>
+        <div class="pairing"><div id="device">Loading pairing...</div><div id="pair"></div></div>
         <div class="controls">
           <input id="url" placeholder="Enter URL" />
           <button id="go">Go</button>
@@ -155,7 +148,7 @@ async function createMainWindow() {
     } catch (err) { console.error('history error', err); }
   });
 
-  // poll device_controls via Edge Function
+  // poll device_controls
   setInterval(async () => {
     try {
       if (!DEVICE_CONTROL_FN_URL) return;
