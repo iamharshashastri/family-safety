@@ -14,6 +14,7 @@
       li{padding:10px;border-bottom:1px solid #eee;display:flex;justify-content:space-between;align-items:center}
       .small{font-size:0.9em;color:#666}
       pre{white-space:pre-wrap;background:#f1f3f4;padding:8px;border-radius:6px;border:1px solid #e0e0e0}
+      .hidden{display:none}
     </style>
   </head>
   <body>
@@ -27,7 +28,7 @@
         <div id="authMsg" class="small"></div>
       </section>
 
-      <section id="dashboard" class="hidden">
+      <section id="dashboard" class="hidden" aria-hidden="true">
         <div id="userInfo" class="small"></div>
 
         <section>
@@ -35,7 +36,7 @@
           <input id="deviceName" placeholder="Device name (e.g. Kid's Laptop)" />
           <input id="pairCode" placeholder="Pairing code (from child app)" />
           <button id="pairBtn">Add</button>
-          <div id="pairResult" class="small"></div>
+          <div id="pairResult" class="small" role="status" aria-live="polite"></div>
         </section>
 
         <section>
@@ -57,7 +58,7 @@
     </div>
 
     <script type="module">
-      // Embedded config using your provided project values
+      // CONFIG: Replace values with your real project values if different.
       const SUPABASE_URL = 'https://vjvzvigfsicyrzyfudgc.supabase.co';
       const SUPABASE_ANON = 'sb_publishable_6AviRtytGEBstXR6ousKnQ_qqS09BZz';
       const EDGE_FN_URL = 'https://vjvzvigfsicyrzyfudgc.supabase.co/functions/v1/device-control';
@@ -65,6 +66,7 @@
       import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm';
       const supabase = createClient(SUPABASE_URL, SUPABASE_ANON);
 
+      // DOM elements
       const emailEl = document.getElementById('email');
       const sendLinkBtn = document.getElementById('sendLink');
       const authMsg = document.getElementById('authMsg');
@@ -83,55 +85,85 @@
 
       sendLinkBtn.addEventListener('click', async () => {
         const email = emailEl.value.trim();
-        if (!email) { authMsg.innerText = 'Enter an email'; return; }
+        authMsg.innerText = '';
+        if (!email) { authMsg.innerText = 'Please enter an email address.'; return; }
         authMsg.innerText = 'Sending sign-in link...';
         const { error } = await supabase.auth.signInWithOtp({ email });
-        if (error) authMsg.innerText = error.message;
-        else authMsg.innerText = 'Magic link sent. Open your email and click link to sign in.';
+        if (error) authMsg.innerText = error.message || 'Failed to send sign-in link.';
+        else authMsg.innerText = 'Magic link sent. Open your email and click the link to sign in.';
       });
 
+      // Initialize session UI
       async function initSession() {
         const { data } = await supabase.auth.getSession();
         const session = data.session;
         if (!session) {
           authSection.classList.remove('hidden');
           dashboard.classList.add('hidden');
+          dashboard.setAttribute('aria-hidden', 'true');
           return;
         }
         authSection.classList.add('hidden');
         dashboard.classList.remove('hidden');
+        dashboard.setAttribute('aria-hidden', 'false');
         userInfo.innerText = `Signed in: ${session.user.email}`;
         await loadDevicesAndSubscribe();
       }
 
       supabase.auth.onAuthStateChange(() => initSession());
+      initSession();
 
+      // Claim device: friendly messages, no raw errors shown
       async function claimDevice(pairing_code, name) {
-        const { data } = await supabase.auth.getSession();
-        const session = data.session;
-        if (!session) { pairResult.innerText = 'Sign in first.'; return; }
+        pairResult.innerText = '';
+        if (!pairing_code) { pairResult.innerText = 'Enter the pairing code shown in the child app.'; return; }
+        const { data: sessionData } = await supabase.auth.getSession();
+        const session = sessionData.session;
+        if (!session) { pairResult.innerText = 'Please sign in first.'; return; }
+
         const accessToken = session.access_token;
-        const res = await fetch(EDGE_FN_URL, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json', 'authorization': 'Bearer ' + accessToken },
-          body: JSON.stringify({ action: 'claim', pairing_code, name })
-        });
-        const j = await res.json();
-        if (!res.ok) pairResult.innerText = 'Error: ' + (j?.error || res.statusText);
-        else {
-          pairResult.innerText = 'Device claimed. Device token below.';
-          deviceTokenBox.innerText = j.device_token + '\nExpires: ' + j.token_expires_at;
+        try {
+          const res = await fetch(EDGE_FN_URL, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', 'authorization': 'Bearer ' + accessToken },
+            body: JSON.stringify({ action: 'claim', pairing_code, name })
+          });
+
+          // handle invalid/expired/random codes gracefully
+          const j = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            // Friendly messages for common cases
+            const msg = (j && j.error) ? j.error.toString() : res.statusText;
+            if (/pairing code/i.test(msg) || /invalid/i.test(msg) || res.status === 404) {
+              pairResult.innerText = 'Pairing code not recognized. Check the code on the child device and try again.';
+            } else if (/expired/i.test(msg) || res.status === 400) {
+              pairResult.innerText = 'Pairing code expired. Restart the child app to generate a new code.';
+            } else {
+              pairResult.innerText = 'Could not claim device. Try again or contact support.';
+              console.warn('claimDevice non-fatal error:', res.status, msg);
+            }
+            return;
+          }
+
+          // Success: show device token and update device list
+          pairResult.innerText = 'Device claimed successfully.';
+          deviceTokenBox.innerText = `${j.device_token}\nExpires: ${j.token_expires_at}`;
+          // Do not throw or show raw errors
           await loadDevicesAndSubscribe();
+        } catch (err) {
+          // network or unexpected error: friendly message, no stack trace shown in UI
+          pairResult.innerText = 'Network error. Please try again.';
+          console.error('claimDevice network error', err);
         }
       }
 
       pairBtn.addEventListener('click', async () => {
         const pairing_code = pairCodeEl.value.trim();
         const name = deviceNameEl.value.trim();
-        if (!pairing_code) { pairResult.innerText = 'Enter pairing code'; return; }
         await claimDevice(pairing_code, name);
       });
 
+      // load devices & subscribe to requests (graceful if no devices)
       async function loadDevicesAndSubscribe() {
         devicesList.innerHTML = '';
         requestsList.innerHTML = '';
@@ -150,9 +182,11 @@
         const deviceIds = (devices || []).map(d => d.device_id);
         if (deviceIds.length === 0) return;
 
+        // initial requests load (if any)
         const { data: reqs } = await supabase.from('screen_time_requests').select('*').in('device_id', deviceIds).order('requested_at', { ascending: false }).limit(200);
         (reqs || []).forEach(renderRequest);
 
+        // subscribe to inserts for each device id (handles empty list gracefully)
         deviceIds.forEach(id => {
           supabase.channel('requests-' + id)
             .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'screen_time_requests', filter: `device_id=eq.${id}` }, payload => {
@@ -176,21 +210,25 @@
         const session = data.session;
         if (!session) return alert('Sign in required');
         const accessToken = session.access_token;
-        const res = await fetch(EDGE_FN_URL, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json', 'authorization': 'Bearer ' + accessToken },
-          body: JSON.stringify({ action: 'approve', requestId, approve, deviceId })
-        });
-        const j = await res.json();
-        if (!res.ok) alert('Error: ' + (j?.error || res.statusText));
-        else {
+        try {
+          const res = await fetch(EDGE_FN_URL, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', 'authorization': 'Bearer ' + accessToken },
+            body: JSON.stringify({ action: 'approve', requestId, approve, deviceId })
+          });
+          const j = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            alert('Could not update request. Try again.');
+            console.warn('approve failed', j);
+            return;
+          }
           const el = document.getElementById('req-' + requestId);
           if (el) el.remove();
-          alert(approve ? 'Approved' : 'Denied');
+        } catch (err) {
+          alert('Network error. Please try again.');
+          console.error('approve error', err);
         }
       }
-
-      initSession();
     </script>
   </body>
 </html>
