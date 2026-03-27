@@ -6,10 +6,7 @@
   "scripts": {
     "start": "electron .",
     "dev": "cross-env NODE_ENV=development ELECTRON_DISABLE_SECURITY_WARNINGS=true electron .",
-    "build": "electron-builder --config electron/electron-builder.json"
-  },
-  "build": {
-    "extends": null
+    "build": "electron-builder --config electron-builder.json"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.26.0",
