@@ -41,10 +41,9 @@ jobs:
       - name: Build Electron (NSIS)
         working-directory: ./electron
         env:
+          # Optional code signing secrets may remain if you use them (remove if you don't need signing)
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_ANON: ${{ secrets.SUPABASE_ANON }}
         run: |
           npm run build
 
