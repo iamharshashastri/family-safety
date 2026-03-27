@@ -6,19 +6,10 @@
   "scripts": {
     "start": "electron .",
     "dev": "cross-env NODE_ENV=development ELECTRON_DISABLE_SECURITY_WARNINGS=true electron .",
-    "build": "electron-builder --publish never"
+    "build": "electron-builder --config electron/electron-builder.json"
   },
   "build": {
-    "appId": "com.iamharshashastri.familysafety.child",
-    "productName": "FamilySafety Child",
-    "files": [
-      "src/**",
-      "node_modules/**",
-      "package.json"
-    ],
-    "win": {
-      "target": ["nsis"]
-    }
+    "extends": null
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.26.0",
