@@ -1,0 +1,196 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Family Safety — Management Portal</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <style>
+      body{font-family:Arial,Helvetica,sans-serif;margin:20px;color:#222}
+      .container{max-width:980px;margin:0 auto}
+      input,button,select{padding:8px;margin:6px 0;border-radius:6px;border:1px solid #ddd;box-sizing:border-box}
+      button{background:#1a73e8;color:#fff;border:none;cursor:pointer}
+      section{padding:12px;border-radius:8px;border:1px solid #eee;background:#fafafa;margin-bottom:16px}
+      ul{list-style:none;padding:0}
+      li{padding:10px;border-bottom:1px solid #eee;display:flex;justify-content:space-between;align-items:center}
+      .small{font-size:0.9em;color:#666}
+      pre{white-space:pre-wrap;background:#f1f3f4;padding:8px;border-radius:6px;border:1px solid #e0e0e0}
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>Family Safety — Management</h1>
+
+      <section id="auth">
+        <h2>Sign in</h2>
+        <input id="email" type="email" placeholder="Parent email" />
+        <button id="sendLink">Send magic link</button>
+        <div id="authMsg" class="small"></div>
+      </section>
+
+      <section id="dashboard" class="hidden">
+        <div id="userInfo" class="small"></div>
+
+        <section>
+          <h3>Pair a device</h3>
+          <input id="deviceName" placeholder="Device name (e.g. Kid's Laptop)" />
+          <input id="pairCode" placeholder="Pairing code (from child app)" />
+          <button id="pairBtn">Add</button>
+          <div id="pairResult" class="small"></div>
+        </section>
+
+        <section>
+          <h3>Your devices</h3>
+          <ul id="devicesList"></ul>
+        </section>
+
+        <section>
+          <h3>Requests</h3>
+          <ul id="requestsList"></ul>
+        </section>
+
+        <section>
+          <h3>Device Token</h3>
+          <div class="small">After claiming, copy the device token below and paste it into the child app via its settings (Set Device Token button).</div>
+          <pre id="deviceTokenBox"></pre>
+        </section>
+      </section>
+    </div>
+
+    <script type="module">
+      // Embedded config using your provided project values
+      const SUPABASE_URL = 'https://vjvzvigfsicyrzyfudgc.supabase.co';
+      const SUPABASE_ANON = 'sb_publishable_6AviRtytGEBstXR6ousKnQ_qqS09BZz';
+      const EDGE_FN_URL = 'https://vjvzvigfsicyrzyfudgc.supabase.co/functions/v1/device-control';
+
+      import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm';
+      const supabase = createClient(SUPABASE_URL, SUPABASE_ANON);
+
+      const emailEl = document.getElementById('email');
+      const sendLinkBtn = document.getElementById('sendLink');
+      const authMsg = document.getElementById('authMsg');
+      const authSection = document.getElementById('auth');
+      const dashboard = document.getElementById('dashboard');
+      const userInfo = document.getElementById('userInfo');
+
+      const deviceNameEl = document.getElementById('deviceName');
+      const pairCodeEl = document.getElementById('pairCode');
+      const pairBtn = document.getElementById('pairBtn');
+      const pairResult = document.getElementById('pairResult');
+
+      const devicesList = document.getElementById('devicesList');
+      const requestsList = document.getElementById('requestsList');
+      const deviceTokenBox = document.getElementById('deviceTokenBox');
+
+      sendLinkBtn.addEventListener('click', async () => {
+        const email = emailEl.value.trim();
+        if (!email) { authMsg.innerText = 'Enter an email'; return; }
+        authMsg.innerText = 'Sending sign-in link...';
+        const { error } = await supabase.auth.signInWithOtp({ email });
+        if (error) authMsg.innerText = error.message;
+        else authMsg.innerText = 'Magic link sent. Open your email and click link to sign in.';
+      });
+
+      async function initSession() {
+        const { data } = await supabase.auth.getSession();
+        const session = data.session;
+        if (!session) {
+          authSection.classList.remove('hidden');
+          dashboard.classList.add('hidden');
+          return;
+        }
+        authSection.classList.add('hidden');
+        dashboard.classList.remove('hidden');
+        userInfo.innerText = `Signed in: ${session.user.email}`;
+        await loadDevicesAndSubscribe();
+      }
+
+      supabase.auth.onAuthStateChange(() => initSession());
+
+      async function claimDevice(pairing_code, name) {
+        const { data } = await supabase.auth.getSession();
+        const session = data.session;
+        if (!session) { pairResult.innerText = 'Sign in first.'; return; }
+        const accessToken = session.access_token;
+        const res = await fetch(EDGE_FN_URL, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'authorization': 'Bearer ' + accessToken },
+          body: JSON.stringify({ action: 'claim', pairing_code, name })
+        });
+        const j = await res.json();
+        if (!res.ok) pairResult.innerText = 'Error: ' + (j?.error || res.statusText);
+        else {
+          pairResult.innerText = 'Device claimed. Device token below.';
+          deviceTokenBox.innerText = j.device_token + '\nExpires: ' + j.token_expires_at;
+          await loadDevicesAndSubscribe();
+        }
+      }
+
+      pairBtn.addEventListener('click', async () => {
+        const pairing_code = pairCodeEl.value.trim();
+        const name = deviceNameEl.value.trim();
+        if (!pairing_code) { pairResult.innerText = 'Enter pairing code'; return; }
+        await claimDevice(pairing_code, name);
+      });
+
+      async function loadDevicesAndSubscribe() {
+        devicesList.innerHTML = '';
+        requestsList.innerHTML = '';
+
+        const { data: sessionData } = await supabase.auth.getSession();
+        const session = sessionData.session;
+        if (!session) return;
+
+        const { data: devices } = await supabase.from('devices').select('*').eq('owner_user_id', session.user.id).order('last_seen', { ascending: false });
+        (devices || []).forEach(d => {
+          const li = document.createElement('li');
+          li.innerHTML = `<div><strong>${d.name || d.device_id}</strong><div class="small">Last seen: ${d.last_seen || '-'}</div></div><div><button data-id="${d.device_id}" class="manage">Manage</button></div>`;
+          devicesList.appendChild(li);
+        });
+
+        const deviceIds = (devices || []).map(d => d.device_id);
+        if (deviceIds.length === 0) return;
+
+        const { data: reqs } = await supabase.from('screen_time_requests').select('*').in('device_id', deviceIds).order('requested_at', { ascending: false }).limit(200);
+        (reqs || []).forEach(renderRequest);
+
+        deviceIds.forEach(id => {
+          supabase.channel('requests-' + id)
+            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'screen_time_requests', filter: `device_id=eq.${id}` }, payload => {
+              renderRequest(payload.new, true);
+            })
+            .subscribe();
+        });
+      }
+
+      function renderRequest(r, prepend=false) {
+        const li = document.createElement('li');
+        li.id = 'req-' + r.id;
+        li.innerHTML = `<div><div><strong>Device ${r.device_id}</strong> — ${r.reason}</div><div class="small">${new Date(r.requested_at).toLocaleString()}</div></div><div><button class="approve">Approve</button> <button class="deny">Deny</button></div>`;
+        li.querySelector('.approve').addEventListener('click', () => handleApprove(r.id, r.device_id, true));
+        li.querySelector('.deny').addEventListener('click', () => handleApprove(r.id, r.device_id, false));
+        if (prepend) requestsList.prepend(li); else requestsList.appendChild(li);
+      }
+
+      async function handleApprove(requestId, deviceId, approve) {
+        const { data } = await supabase.auth.getSession();
+        const session = data.session;
+        if (!session) return alert('Sign in required');
+        const accessToken = session.access_token;
+        const res = await fetch(EDGE_FN_URL, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'authorization': 'Bearer ' + accessToken },
+          body: JSON.stringify({ action: 'approve', requestId, approve, deviceId })
+        });
+        const j = await res.json();
+        if (!res.ok) alert('Error: ' + (j?.error || res.statusText));
+        else {
+          const el = document.getElementById('req-' + requestId);
+          if (el) el.remove();
+          alert(approve ? 'Approved' : 'Denied');
+        }
+      }
+
+      initSession();
+    </script>
+  </body>
+</html>
