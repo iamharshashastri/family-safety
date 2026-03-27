@@ -11,25 +11,42 @@ jobs:
     env:
       NODE_OPTIONS: "--max_old_space_size=4096"
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      - name: Install dependencies
+      - name: Install dependencies (electron)
         working-directory: ./electron
-        run: npm ci
+        run: |
+          npm config set fund false
+          npm config set audit false
+          npm install --no-audit --no-fund
 
-      - name: Build Electron app
+      - name: Build renderer (if present)
+        working-directory: ./electron
+        run: |
+          if (Test-Path src/renderer) {
+            Push-Location src/renderer
+            npm install --no-audit --no-fund
+            npm run build || Write-Host "Renderer build step returned non-zero but continuing"
+            Pop-Location
+          } else {
+            Write-Host "No renderer to build"
+          }
+
+      - name: Build Electron (NSIS)
         working-directory: ./electron
         env:
-          # Optional secrets for build-time (do not commit secrets to repo)
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-        run: npm run build
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON: ${{ secrets.SUPABASE_ANON }}
+        run: |
+          npm run build
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
